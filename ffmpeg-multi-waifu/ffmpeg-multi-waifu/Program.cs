@@ -2,6 +2,7 @@
 using System.Threading.Tasks;
 using System.IO;
 using System.Diagnostics;
+using System.Linq;
 
 namespace ffmpeg_multi_waifu
 {
@@ -9,9 +10,29 @@ namespace ffmpeg_multi_waifu
     {
         static void Main(string[] args)
         {
+            if (!File.Exists("ffmpeg.exe"))
+            {
+                Console.Write("Error: ffmpeg.exe not found");
+                Console.ReadKey();
+                return;
+            }
 
-            Console.Write("File:");
+            if (!File.Exists("waifu2x-caffe-cui.exe"))
+            {
+                Console.Write("Error: waifu2x-caffe-cui.exe not found");
+                Console.ReadKey();
+                return;
+            }
+
+            Console.Write("File (absolute path):");
             string inputVideo = Console.ReadLine();
+
+            if (!File.Exists(inputVideo))
+            {
+                Console.Write("Error: file " + inputVideo + " not found");
+                Console.ReadKey();
+                return;
+            }
 
             Console.Write("Threads (2,4):");
             int threads = Convert.ToInt32(Console.ReadLine());
@@ -33,10 +54,10 @@ namespace ffmpeg_multi_waifu
             string outputAudio = (@"tmp_files\output_audio");
             int errFiles = 0;
 
-            System.IO.Directory.CreateDirectory("tmp_files");
-            System.IO.Directory.CreateDirectory(pngPreResize);
-            System.IO.Directory.CreateDirectory(pngPostResize);
-            System.IO.Directory.CreateDirectory(outputAudio);
+            Directory.CreateDirectory("tmp_files");
+            Directory.CreateDirectory(pngPreResize);
+            Directory.CreateDirectory(pngPostResize);
+            Directory.CreateDirectory(outputAudio);
 
             if ((inputVideoExt != ".mkv") && (inputVideoExt != ".mp4") && (inputVideoExt != ".avi") && (inputVideoExt != ".webm"))
             {
@@ -45,39 +66,62 @@ namespace ffmpeg_multi_waifu
                 return;
             }
 
+            if (inputVideoExt == ".webm") {
+                Console.WriteLine("input webm -> output mp4");
+                inputVideoExt = ".mp4";
+            }
+
             Stopwatch timer = new Stopwatch();
             timer.Start();
 
             //Step 1
-            var ffmpegV = new Process();
-            ffmpegV.StartInfo.FileName = "ffmpeg.exe";
-            ffmpegV.StartInfo.Arguments = " -i " + inputVideo + " -r 23.976 -f image2 " + pngPreResize + "%06d.png";
-            ffmpegV.StartInfo.WindowStyle = ProcessWindowStyle.Maximized;
-            ffmpegV.Start();
-            ffmpegV.WaitForExit();
-            ffmpegV.Close();
-            Console.WriteLine("Step 1: " + timer.Elapsed.Minutes + "." + timer.Elapsed.Seconds);
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
+            if (!Directory.EnumerateFiles(pngPreResize).Any())
+            {
+                var ffmpegV = new Process();
+                ffmpegV.StartInfo.FileName = "ffmpeg.exe";
+                ffmpegV.StartInfo.Arguments = " -i " + inputVideo + " -r 23.976 -f image2 " + pngPreResize + "%06d.png";
+                ffmpegV.StartInfo.WindowStyle = ProcessWindowStyle.Maximized;
+                ffmpegV.Start();
+                ffmpegV.WaitForExit();
+                ffmpegV.Close();
+                Console.WriteLine("Step 1: " + timer.Elapsed.Minutes + "." + timer.Elapsed.Seconds);
+                GC.Collect();
+            }
+            else
+            {
+                Console.WriteLine("Step 1: Skip (directory " + pngPreResize + "  not empty) " + timer.Elapsed.Minutes + "." + timer.Elapsed.Seconds);
+                System.Threading.Thread.Sleep(2500);
+            }
 
             //Step 2
-            var ffmpegA = new Process();
-            ffmpegA.StartInfo.FileName = "ffmpeg.exe";
-            ffmpegA.StartInfo.Arguments = " -i " + inputVideo + " " + outputAudio + @"\audio.mp3";
-            ffmpegA.StartInfo.WindowStyle = ProcessWindowStyle.Maximized;
-            ffmpegA.Start();
-            ffmpegA.WaitForExit();
-            ffmpegA.Close();
-            Console.WriteLine("Step 2: " + timer.Elapsed.Minutes + "." + timer.Elapsed.Seconds);
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
-
+            if (!Directory.EnumerateFiles(outputAudio).Any())
+            {
+                var ffmpegA = new Process();
+                ffmpegA.StartInfo.FileName = "ffmpeg.exe";
+                ffmpegA.StartInfo.Arguments = " -i " + inputVideo + " " + outputAudio + @"\audio.mp3";
+                ffmpegA.StartInfo.WindowStyle = ProcessWindowStyle.Maximized;
+                ffmpegA.Start();
+                ffmpegA.WaitForExit();
+                ffmpegA.Close();
+                Console.WriteLine("Step 2: " + timer.Elapsed.Minutes + "." + timer.Elapsed.Seconds);
+                GC.Collect();
+            }
+            else
+            {
+                Console.WriteLine("Step 2: Skip (directory " + outputAudio + "  not empty) " + timer.Elapsed.Minutes + "." + timer.Elapsed.Seconds);
+                System.Threading.Thread.Sleep(2500);
+            }
             DirectoryInfo dir = new DirectoryInfo(pngPreResize);
             FileInfo[] files = dir.GetFiles("*.png");
 
             Parallel.For(0, files.Length, thr, i =>
             {
                 //Step 3
+                if (File.Exists(pngPostResize + files[i]))
+                {
+                    Console.WriteLine("File: {0}, Already exist (SKIP)", files[i]);
+                    return;
+                }
                 var waifuE = 1;
                 while (waifuE != 0)
                 {
@@ -93,7 +137,7 @@ namespace ffmpeg_multi_waifu
                     if (waifuE != 0)
                     {
                         errFiles++;
-                        Console.WriteLine("File: {0}, Code: {1} (Error, retrying...)", files[i], waifuE);
+                        Console.WriteLine("File: {0}, Code: {1} (Error, not enough memory? Retrying...)", files[i], waifuE);
                     }
                     else
                     {
@@ -104,7 +148,6 @@ namespace ffmpeg_multi_waifu
             Console.WriteLine("Finished. Repeats: " + errFiles);
             Console.WriteLine("Step 3: " + timer.Elapsed.Minutes + "." + timer.Elapsed.Seconds);
             GC.Collect();
-            GC.WaitForPendingFinalizers();
 
             //Step 4
             var ffmpegO = new Process();
@@ -115,16 +158,18 @@ namespace ffmpeg_multi_waifu
             ffmpegO.WaitForExit();
             ffmpegO.Close();
             Console.WriteLine("Step 4: " + timer.Elapsed.Minutes + "." + timer.Elapsed.Seconds);
+            Console.WriteLine("Output: " + inputVideoPath + @"\output" + inputVideoExt);
 
             //Step 5
+            Console.WriteLine("Press any key to remove tmp folder...");
+            Console.ReadKey();
             Console.WriteLine("Removing \"tmp_files\\\"...");
             Directory.Delete("tmp_files", true);
 
             timer.Stop();
-            Console.WriteLine("Output: " + inputVideoPath + @"\output" + inputVideoExt);
             Console.WriteLine("Finished. Time: " + timer.Elapsed.Minutes + "." + timer.Elapsed.Seconds);
 
-            Console.ReadKey();
+            Console.ReadKey(); 
         }
     }
 }
