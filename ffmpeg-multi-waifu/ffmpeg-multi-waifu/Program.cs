@@ -24,7 +24,7 @@ namespace ffmpeg_multi_waifu
                 return;
             }
 
-            Console.Write("File (absolute path):");
+            Console.Write("File (absolute path / Drag and Drop)\r\n>");
             string inputVideo = Console.ReadLine();
 
             if (!File.Exists(inputVideo))
@@ -74,47 +74,38 @@ namespace ffmpeg_multi_waifu
             Stopwatch timer = new Stopwatch();
             timer.Start();
 
+            Ffmpeg ffmpeg = new Ffmpeg();
+
             //Step 1
             if (!Directory.EnumerateFiles(pngPreResize).Any())
             {
-                var ffmpegV = new Process();
-                ffmpegV.StartInfo.FileName = "ffmpeg.exe";
-                ffmpegV.StartInfo.Arguments = " -i " + inputVideo + " -r 23.976 -f image2 " + pngPreResize + "%06d.png";
-                ffmpegV.StartInfo.WindowStyle = ProcessWindowStyle.Maximized;
-                ffmpegV.Start();
-                ffmpegV.WaitForExit();
-                ffmpegV.Close();
-                Console.WriteLine("Step 1: " + timer.Elapsed.Minutes + "." + timer.Elapsed.Seconds);
-                GC.Collect();
+                ffmpeg.FfmpegProcess("video", inputVideo, pngPreResize);
+                Console.WriteLine(string.Format("Step 1: {0:D2}:{1:D2}:{2:D2}", timer.Elapsed.Hours, timer.Elapsed.Minutes, timer.Elapsed.Seconds));
             }
             else
             {
-                Console.WriteLine("Step 1: Skip (directory " + pngPreResize + "  not empty) " + timer.Elapsed.Minutes + "." + timer.Elapsed.Seconds);
-                System.Threading.Thread.Sleep(2500);
+                Console.WriteLine(string.Format("Step 1: Skip (directory " + pngPreResize + " not empty) {0:D2}:{1:D2}:{2:D2}", timer.Elapsed.Hours, timer.Elapsed.Minutes, timer.Elapsed.Seconds));
+                System.Threading.Thread.Sleep(1000);
             }
 
             //Step 2
             if (!Directory.EnumerateFiles(outputAudio).Any())
             {
-                var ffmpegA = new Process();
-                ffmpegA.StartInfo.FileName = "ffmpeg.exe";
-                ffmpegA.StartInfo.Arguments = " -i " + inputVideo + " " + outputAudio + @"\audio.mp3";
-                ffmpegA.StartInfo.WindowStyle = ProcessWindowStyle.Maximized;
-                ffmpegA.Start();
-                ffmpegA.WaitForExit();
-                ffmpegA.Close();
-                Console.WriteLine("Step 2: " + timer.Elapsed.Minutes + "." + timer.Elapsed.Seconds);
-                GC.Collect();
+                ffmpeg.FfmpegProcess("audio", inputVideo, outputAudio);
+                Console.WriteLine(string.Format("Step 2: {0:D2}:{1:D2}:{2:D2}", timer.Elapsed.Hours, timer.Elapsed.Minutes, timer.Elapsed.Seconds));
             }
             else
             {
-                Console.WriteLine("Step 2: Skip (directory " + outputAudio + "  not empty) " + timer.Elapsed.Minutes + "." + timer.Elapsed.Seconds);
-                System.Threading.Thread.Sleep(2500);
+                Console.WriteLine(string.Format("Step 2: Skip (directory " + outputAudio + " not empty) {0:D2}:{1:D2}:{2:D2}", timer.Elapsed.Hours, timer.Elapsed.Minutes, timer.Elapsed.Seconds));
+                System.Threading.Thread.Sleep(1000);
             }
             DirectoryInfo dir = new DirectoryInfo(pngPreResize);
             FileInfo[] files = dir.GetFiles("*.png");
 
-            Parallel.For(0, files.Length, thr, i =>
+            int length = files.Length;
+            int count = 0;
+
+            Parallel.For(0, length, thr, i =>
             {
                 //Step 3
                 if (File.Exists(pngPostResize + files[i]))
@@ -122,10 +113,11 @@ namespace ffmpeg_multi_waifu
                     Console.WriteLine("File: {0}, Already exist (SKIP)", files[i]);
                     return;
                 }
-                var waifuE = 1;
+                int waifuE = 1;
                 while (waifuE != 0)
                 {
-                    var waifu = new Process();
+                    GC.Collect();
+                    Process waifu = new Process();
                     waifu.StartInfo.FileName = "waifu2x-caffe-cui.exe";
                     waifu.StartInfo.Arguments = @"-m noise_scale --noise_level 1 --scale_ratio " + scaleRatio + " -i " + pngPreResize + files[i] + " -o " + pngPostResize + files[i];
                     waifu.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
@@ -141,34 +133,38 @@ namespace ffmpeg_multi_waifu
                     }
                     else
                     {
-                        Console.WriteLine("File: {0}, Code: {1} (OK)", files[i], waifuE);
+                        count++;
+                        Console.WriteLine("File: {0}, Code: {1} (OK) [{2}/{3}]", files[i], waifuE, count, length);
                     }
                 }
             });
             Console.WriteLine("Finished. Repeats: " + errFiles);
-            Console.WriteLine("Step 3: " + timer.Elapsed.Minutes + "." + timer.Elapsed.Seconds);
+            Console.WriteLine(string.Format("Step 3: {0:D2}:{1:D2}:{2:D2}", timer.Elapsed.Hours, timer.Elapsed.Minutes, timer.Elapsed.Seconds));
             GC.Collect();
 
             //Step 4
-            var ffmpegO = new Process();
-            ffmpegO.StartInfo.FileName = "ffmpeg.exe";
-            ffmpegO.StartInfo.Arguments = " -f image2 -framerate 23.976 -i " + pngPostResize + "%06d.png -i " + outputAudio + @"\audio.mp3 -r 23.976 -vcodec libx264 -crf 18 " + inputVideoPath + @"\output" + inputVideoExt;
-            ffmpegO.StartInfo.WindowStyle = ProcessWindowStyle.Maximized;
-            ffmpegO.Start();
-            ffmpegO.WaitForExit();
-            ffmpegO.Close();
-            Console.WriteLine("Step 4: " + timer.Elapsed.Minutes + "." + timer.Elapsed.Seconds);
+            ffmpeg.FfmpegProcess(pngPostResize, outputAudio, inputVideoPath, inputVideoExt);
+            Console.WriteLine(string.Format("Step 4: {0:D2}:{1:D2}:{2:D2}", timer.Elapsed.Hours, timer.Elapsed.Minutes, timer.Elapsed.Seconds));
             Console.WriteLine("Output: " + inputVideoPath + @"\output" + inputVideoExt);
 
             //Step 5
-            Console.WriteLine("Press any key to remove tmp folder...");
-            Console.ReadKey();
-            Console.WriteLine("Removing \"tmp_files\\\"...");
-            Directory.Delete("tmp_files", true);
+            while (true) { 
+                Console.Write("Remove tmp folder? [y/n] ");
+                string key = Console.ReadLine();
+                if (key == "y")
+                {
+                    Console.WriteLine("Removing \"tmp_files\\\"...");
+                    Directory.Delete("tmp_files", true);
+                    break;
+                } else if (key == "n")
+                {
+                    break;
+                }
+            }
 
             timer.Stop();
-            Console.WriteLine("Finished. Time: " + timer.Elapsed.Minutes + "." + timer.Elapsed.Seconds);
-
+            Console.WriteLine(string.Format("Finished. Time: {0:D2}:{1:D2}:{2:D2}", timer.Elapsed.Hours, timer.Elapsed.Minutes, timer.Elapsed.Seconds));
+            Console.WriteLine("Press any key to close ffmpeg-multi-waifu.exe");
             Console.ReadKey(); 
         }
     }
