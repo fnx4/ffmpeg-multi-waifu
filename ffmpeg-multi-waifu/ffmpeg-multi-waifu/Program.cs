@@ -3,6 +3,8 @@ using System.Threading.Tasks;
 using System.IO;
 using System.Diagnostics;
 using System.Linq;
+using System.Collections.Generic;
+using System.Threading;
 
 namespace ffmpeg_multi_waifu
 {
@@ -34,7 +36,7 @@ namespace ffmpeg_multi_waifu
                 return;
             }
 
-            Console.Write("Threads (2,4):");
+            Console.Write("Threads (2,3,4):");
             int threads = Convert.ToInt32(Console.ReadLine());
             ParallelOptions thr = new ParallelOptions
             {
@@ -42,7 +44,7 @@ namespace ffmpeg_multi_waifu
                 MaxDegreeOfParallelism = threads
             };
 
-            Console.Write("Multiplier (1,2,3):");
+            Console.Write("Multiplier (1,2,3,4):");
             string scaleRatio = Console.ReadLine();
 
             string inputVideoExt = Path.GetExtension(inputVideo);
@@ -52,7 +54,7 @@ namespace ffmpeg_multi_waifu
             string pngPreResize = (@"tmp_files\png_frames_default\");
             string pngPostResize = (@"tmp_files\png_frames_upscaled\");
             string outputAudio = (@"tmp_files\output_audio");
-            int errFiles = 0;
+            int errFilesCounter = 0;
 
             Directory.CreateDirectory("tmp_files");
             Directory.CreateDirectory(pngPreResize);
@@ -79,7 +81,7 @@ namespace ffmpeg_multi_waifu
             //Step 1
             if (!Directory.EnumerateFiles(pngPreResize).Any())
             {
-                ffmpeg.FfmpegProcess("video", inputVideo, pngPreResize);
+                ffmpeg.FfmpegProcessSplit("video", inputVideo, pngPreResize);
                 Console.WriteLine(string.Format("Step 1: {0:D2}:{1:D2}:{2:D2}", timer.Elapsed.Hours, timer.Elapsed.Minutes, timer.Elapsed.Seconds));
             }
             else
@@ -91,7 +93,7 @@ namespace ffmpeg_multi_waifu
             //Step 2
             if (!Directory.EnumerateFiles(outputAudio).Any())
             {
-                ffmpeg.FfmpegProcess("audio", inputVideo, outputAudio);
+                ffmpeg.FfmpegProcessSplit("audio", inputVideo, outputAudio);
                 Console.WriteLine(string.Format("Step 2: {0:D2}:{1:D2}:{2:D2}", timer.Elapsed.Hours, timer.Elapsed.Minutes, timer.Elapsed.Seconds));
             }
             else
@@ -105,45 +107,75 @@ namespace ffmpeg_multi_waifu
             int length = files.Length;
             int count = 0;
 
+            Dictionary<int, bool> threadsInUse = new Dictionary<int, bool>();
+            for (int i = 0; i < threads; i++)
+            {
+                threadsInUse.Add(i, false);
+            }
+
+            //Step 3
             Parallel.For(0, length, thr, i =>
             {
-                //Step 3
+                
                 if (File.Exists(pngPostResize + files[i]))
                 {
                     Console.WriteLine("File: {0}, Already exist (SKIP)", files[i]);
+                    count++;
                     return;
                 }
-                int waifuE = 1;
-                while (waifuE != 0)
+                while (true)
                 {
-                    GC.Collect();
+                    int waifuExitCode = 1;
+                    int thread = -1;
+                    for (int j = 0; j < threads; j++)
+                    {
+                        
+                        if (threadsInUse[j] == false)
+                        {
+                            thread = j;
+                            //Console.WriteLine("Current thread: " + thread);
+                            threadsInUse[thread] = true;
+                            break;
+                        }
+                    }
+                    if (thread == -1)
+                    {
+                        Thread.Sleep(2000);
+                        continue;
+                    }
+
                     Process waifu = new Process();
                     waifu.StartInfo.FileName = "waifu2x-caffe-cui.exe";
                     waifu.StartInfo.Arguments = @"-m noise_scale --noise_level 1 --scale_ratio " + scaleRatio + " -i " + pngPreResize + files[i] + " -o " + pngPostResize + files[i];
                     waifu.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
                     waifu.Start();
+                    //threads = 0x01 << threads;
+                    waifu.ProcessorAffinity = (IntPtr)Math.Pow(2, thread);
                     waifu.WaitForExit();
-                    waifuE = waifu.ExitCode;
+                    waifuExitCode = waifu.ExitCode;
                     waifu.Close();
 
-                    if (waifuE != 0)
+                    if (waifuExitCode != 0)
                     {
-                        errFiles++;
-                        Console.WriteLine("File: {0}, Code: {1} (Error, not enough memory? Retrying...)", files[i], waifuE);
+                        errFilesCounter++;
+                        Console.WriteLine("Thread: {0:D2}, File: {1}, Code: {2} (Error, not enough video memory? Retrying...)", thread, files[i], waifuExitCode);
+                        threadsInUse[thread] = false;
+                        continue;
                     }
                     else
                     {
                         count++;
-                        Console.WriteLine("File: {0}, Code: {1} (OK) [{2}/{3}]", files[i], waifuE, count, length);
+                        Console.WriteLine("Thread: {0:D2}, File: {1}, Code: {2} (OK) [{3}/{4}]", thread, files[i], waifuExitCode, count, length);
+                        threadsInUse[thread] = false;
+                        break;
                     }
                 }
             });
-            Console.WriteLine("Finished. Repeats: " + errFiles);
+            Console.WriteLine("Finished. Repeats: " + errFilesCounter);
             Console.WriteLine(string.Format("Step 3: {0:D2}:{1:D2}:{2:D2}", timer.Elapsed.Hours, timer.Elapsed.Minutes, timer.Elapsed.Seconds));
-            GC.Collect();
 
             //Step 4
-            ffmpeg.FfmpegProcess(pngPostResize, outputAudio, inputVideoPath, inputVideoExt);
+            ffmpeg.FfmpegProcessMerge(pngPostResize, outputAudio, inputVideoPath, inputVideoExt);
             Console.WriteLine(string.Format("Step 4: {0:D2}:{1:D2}:{2:D2}", timer.Elapsed.Hours, timer.Elapsed.Minutes, timer.Elapsed.Seconds));
             Console.WriteLine("Output: " + inputVideoPath + @"\output" + inputVideoExt);
 

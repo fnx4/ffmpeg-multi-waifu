@@ -10,7 +10,7 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyConfiguration("")]
 [assembly: AssemblyCompany("")]
 [assembly: AssemblyProduct("ffmpeg-multi-waifu")]
-[assembly: AssemblyCopyright("Copyright © fnx4 2018")]
+[assembly: AssemblyCopyright("Copyright © 2018 - 2020 fnx4")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]
 
@@ -32,5 +32,5 @@ using System.Runtime.InteropServices;
 // Можно задать все значения или принять номер сборки и номер редакции по умолчанию.
 // используя "*", как показано ниже:
 // [assembly: AssemblyVersion("1.0.*")]
-[assembly: AssemblyVersion("2019.04.14")]
-[assembly: AssemblyFileVersion("2019.04.14")]
+[assembly: AssemblyVersion("2020.07.11")]
+[assembly: AssemblyFileVersion("2020.07.11")]

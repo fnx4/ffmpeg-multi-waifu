@@ -5,25 +5,28 @@ namespace ffmpeg_multi_waifu
 {
     class Ffmpeg
     {
-        public void FfmpegProcess(string mode, string input, string output)
+        public void FfmpegProcessSplit(string mode, string input, string output)
         {
             Process ffmpeg = new Process();
             ffmpeg.StartInfo.FileName = "ffmpeg.exe";
-            if (mode == "video")
+
+            switch(mode)
             {
-                ffmpeg.StartInfo.Arguments = " -i " + input + " -r 23.976 -f image2 " + output + "%06d.png";
-            } else if (mode == "audio")
-            {
-                ffmpeg.StartInfo.Arguments = " -i " + input + " " + output + @"\audio.mp3";
+                case "video":
+                    ffmpeg.StartInfo.Arguments = " -i " + input + " -r 23.976 -f image2 " + output + "%06d.png";
+                    break;
+                case "audio":
+                    ffmpeg.StartInfo.Arguments = " -i " + input + " " + output + @"\audio.mp3";
+                    break;
             }
+
             ffmpeg.StartInfo.WindowStyle = ProcessWindowStyle.Maximized;
             ffmpeg.Start();
             ffmpeg.WaitForExit();
             ffmpeg.Close();
-            GC.Collect();
         }
 
-        public void FfmpegProcess(string pngPostResize, string outputAudio, string inputVideoPath, string inputVideoExt)
+        public void FfmpegProcessMerge(string pngPostResize, string outputAudio, string inputVideoPath, string inputVideoExt)
         {
             Process ffmpeg = new Process();
             ffmpeg.StartInfo.FileName = "ffmpeg.exe";
@@ -32,7 +35,6 @@ namespace ffmpeg_multi_waifu
             ffmpeg.Start();
             ffmpeg.WaitForExit();
             ffmpeg.Close();
-            GC.Collect();
         }
     }
 }
