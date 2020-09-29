@@ -3,8 +3,9 @@ using System.Threading.Tasks;
 using System.IO;
 using System.Diagnostics;
 using System.Linq;
-using System.Collections.Generic;
 using System.Threading;
+using System.Globalization;
+using System.Collections.Generic;
 
 namespace ffmpeg_multi_waifu
 {
@@ -36,28 +37,41 @@ namespace ffmpeg_multi_waifu
                 return;
             }
 
-            Console.Write("Threads (2,3,4):");
+            Console.Write("Threads limit (2, 3, 4...): ");
             int threads = Convert.ToInt32(Console.ReadLine());
             ParallelOptions thr = new ParallelOptions
             {
-                //MaxDegreeOfParallelism = Environment.ProcessorCount
                 MaxDegreeOfParallelism = threads
             };
 
-            Console.Write("Multiplier (1,2,3,4):");
+            ParallelOptions thrHash = new ParallelOptions
+            {
+                MaxDegreeOfParallelism = Environment.ProcessorCount
+            };
+
+            Console.Write("Multiplier (2, 2.5, 3, 3.5, 4...): ");
             string scaleRatio = Console.ReadLine();
+
+            if (!Double.TryParse(scaleRatio, NumberStyles.Any, CultureInfo.InvariantCulture, out double d) || scaleRatio.Contains(","))
+            {
+                Console.Write(scaleRatio + " is not a number");
+                Console.ReadKey();
+                return;
+            }
 
             string inputVideoExt = Path.GetExtension(inputVideo);
             string inputVideoName = Path.GetFileNameWithoutExtension(inputVideo);
             string inputVideoPath = Path.GetDirectoryName(inputVideo);
 
             string pngPreResize = (@"tmp_files\png_frames_default\");
+            string pngSha512 = (@"tmp_files\sha512\");
             string pngPostResize = (@"tmp_files\png_frames_upscaled\");
             string outputAudio = (@"tmp_files\output_audio");
-            int errFilesCounter = 0;
+            int errFilesCount = 0;
 
             Directory.CreateDirectory("tmp_files");
             Directory.CreateDirectory(pngPreResize);
+            Directory.CreateDirectory(pngSha512);
             Directory.CreateDirectory(pngPostResize);
             Directory.CreateDirectory(outputAudio);
 
@@ -90,11 +104,17 @@ namespace ffmpeg_multi_waifu
                 System.Threading.Thread.Sleep(1000);
             }
 
+
             //Step 2
             if (!Directory.EnumerateFiles(outputAudio).Any())
             {
                 ffmpeg.FfmpegProcessSplit("audio", inputVideo, outputAudio);
+                if (!File.Exists(outputAudio + @"\audio.mp3"))
+                {
+                    Console.WriteLine("no audio detected");
+                }
                 Console.WriteLine(string.Format("Step 2: {0:D2}:{1:D2}:{2:D2}", timer.Elapsed.Hours, timer.Elapsed.Minutes, timer.Elapsed.Seconds));
+
             }
             else
             {
@@ -107,77 +127,92 @@ namespace ffmpeg_multi_waifu
             int length = files.Length;
             int count = 0;
 
-            Dictionary<int, bool> threadsInUse = new Dictionary<int, bool>();
-            for (int i = 0; i < threads; i++)
+            //Step 3.1
+            Parallel.For(0, length, thrHash, i =>
             {
-                threadsInUse.Add(i, false);
+                ffmpeg.FfmpegProcessHash(files[i].Name, pngPreResize, pngSha512);
+            });
+            DirectoryInfo dirHash = new DirectoryInfo(pngSha512);
+            FileInfo[] filesHash = dirHash.GetFiles("*.sha512");
+
+            Dictionary<string, List<string>> hashes = new Dictionary<string, List<string>>();
+            foreach (FileInfo file in filesHash)
+            {
+                string val = File.ReadAllText(pngSha512 + @"\" + file.Name).Trim();
+                List<string> cList = null;
+                if (hashes.ContainsKey(val))
+                {
+                    cList = hashes[val];
+                }
+                else
+                {
+                    cList = new List<string>();
+                }
+                cList.Add(file.Name);
+                hashes[val] = cList;
             }
 
-            //Step 3
-            Parallel.For(0, length, thr, i =>
+           //Step 3.2
+           Parallel.For(0, length, thr, i =>
             {
-                
                 if (File.Exists(pngPostResize + files[i]))
                 {
                     Console.WriteLine("File: {0}, Already exist (SKIP)", files[i]);
-                    count++;
                     return;
                 }
-                while (true)
+
+                string hash = File.ReadAllText(pngSha512 + @"\" + files[i] + ".sha512").Trim();
+                if (hashes[hash].Count > 1)
                 {
-                    int waifuExitCode = 1;
-                    int thread = -1;
-                    for (int j = 0; j < threads; j++)
+                    foreach (string dupe in hashes[hash])
                     {
-                        
-                        if (threadsInUse[j] == false)
+                        String dupeName = dupe.Replace(".sha512", "");
+                        if (File.Exists(pngPostResize + dupeName))
                         {
-                            thread = j;
-                            //Console.WriteLine("Current thread: " + thread);
-                            threadsInUse[thread] = true;
-                            break;
+                            File.Copy(pngPostResize + @"\" + dupeName, pngPostResize + @"\" + files[i].Name);
+                            count++;
+                            Console.WriteLine("Thread ID: {0:D2}, File: {1}, DUPLICATE [{2}/{3}] {4}", Task.CurrentId, files[i], count, length, hash);
+                            return;
                         }
                     }
-                    if (thread == -1)
-                    {
-                        Thread.Sleep(2000);
-                        continue;
-                    }
+                }
 
+                int waifuExitCode = 1;
+                while (waifuExitCode != 0)
+                {
+                    GC.Collect();
                     Process waifu = new Process();
                     waifu.StartInfo.FileName = "waifu2x-caffe-cui.exe";
                     waifu.StartInfo.Arguments = @"-m noise_scale --noise_level 1 --scale_ratio " + scaleRatio + " -i " + pngPreResize + files[i] + " -o " + pngPostResize + files[i];
                     waifu.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
                     waifu.Start();
-                    //threads = 0x01 << threads;
-                    waifu.ProcessorAffinity = (IntPtr)Math.Pow(2, thread);
                     waifu.WaitForExit();
                     waifuExitCode = waifu.ExitCode;
                     waifu.Close();
 
                     if (waifuExitCode != 0)
                     {
-                        errFilesCounter++;
-                        Console.WriteLine("Thread: {0:D2}, File: {1}, Code: {2} (Error, not enough video memory? Retrying...)", thread, files[i], waifuExitCode);
-                        threadsInUse[thread] = false;
-                        continue;
+                        errFilesCount++;
+                        Console.WriteLine("Thread ID: {0:D2}, File: {1}, Code: {2} (Error, not enough memory? Retrying...)", Task.CurrentId, files[i], waifuExitCode);
+                        Thread.Sleep(250);
                     }
                     else
                     {
                         count++;
-                        Console.WriteLine("Thread: {0:D2}, File: {1}, Code: {2} (OK) [{3}/{4}]", thread, files[i], waifuExitCode, count, length);
-                        threadsInUse[thread] = false;
-                        break;
+                        Console.WriteLine("Thread ID: {0:D2}, File: {1}, Code: {2} (OK) [{3}/{4}] {5}", Task.CurrentId, files[i], waifuExitCode, count, length, hash);
                     }
                 }
             });
-            Console.WriteLine("Finished. Repeats: " + errFilesCounter);
+            Console.WriteLine("Finished. Repeats: " + errFilesCount);
             Console.WriteLine(string.Format("Step 3: {0:D2}:{1:D2}:{2:D2}", timer.Elapsed.Hours, timer.Elapsed.Minutes, timer.Elapsed.Seconds));
+            GC.Collect();
+
 
             //Step 4
             ffmpeg.FfmpegProcessMerge(pngPostResize, outputAudio, inputVideoPath, inputVideoExt);
             Console.WriteLine(string.Format("Step 4: {0:D2}:{1:D2}:{2:D2}", timer.Elapsed.Hours, timer.Elapsed.Minutes, timer.Elapsed.Seconds));
             Console.WriteLine("Output: " + inputVideoPath + @"\output" + inputVideoExt);
+            timer.Stop();
 
             //Step 5
             while (true) { 
@@ -188,13 +223,13 @@ namespace ffmpeg_multi_waifu
                     Console.WriteLine("Removing \"tmp_files\\\"...");
                     Directory.Delete("tmp_files", true);
                     break;
-                } else if (key == "n")
+                }
+                else if (key == "n")
                 {
                     break;
                 }
             }
 
-            timer.Stop();
             Console.WriteLine(string.Format("Finished. Time: {0:D2}:{1:D2}:{2:D2}", timer.Elapsed.Hours, timer.Elapsed.Minutes, timer.Elapsed.Seconds));
             Console.WriteLine("Press any key to close ffmpeg-multi-waifu.exe");
             Console.ReadKey(); 
